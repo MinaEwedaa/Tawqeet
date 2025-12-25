@@ -5,6 +5,7 @@ namespace Tawqeet.App;
 /// <summary>
 /// Monitors USB device plug/unplug events using WMI.
 /// Raises events when devices are connected or disconnected.
+/// Specifically enhanced for ESP32 device detection.
 /// </summary>
 public class UsbDeviceWatcher : IDisposable
 {
@@ -13,14 +14,43 @@ public class UsbDeviceWatcher : IDisposable
     private bool _disposed;
 
     /// <summary>
-    /// Raised when a USB device is connected.
+    /// Raised when a USB device is connected. Event args contain device info.
     /// </summary>
-    public event EventHandler? DeviceConnected;
+    public event EventHandler<DeviceInfoEventArgs>? DeviceConnected;
 
     /// <summary>
-    /// Raised when a USB device is disconnected.
+    /// Raised when a USB device is disconnected. Event args contain device info.
     /// </summary>
-    public event EventHandler? DeviceDisconnected;
+    public event EventHandler<DeviceInfoEventArgs>? DeviceDisconnected;
+
+    /// <summary>
+    /// Checks if a device is likely an ESP32 based on its description.
+    /// </summary>
+    public static bool IsLikelyEsp32(string? deviceName, string? deviceCaption, string? pnpDeviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceName) && string.IsNullOrWhiteSpace(deviceCaption) && string.IsNullOrWhiteSpace(pnpDeviceId))
+            return false;
+
+        var combined = $"{deviceName} {deviceCaption} {pnpDeviceId}".ToUpperInvariant();
+
+        // Common ESP32 USB-to-Serial chip identifiers
+        var esp32Indicators = new[]
+        {
+            "CP210",      // Silicon Labs CP210x (very common for ESP32)
+            "CH340",      // WCH CH340 (common for ESP32)
+            "CH341",      // WCH CH341
+            "FT232",      // FTDI FT232 (sometimes used)
+            "ESP32",      // Direct ESP32 mention
+            "ESP32-S2",   // ESP32-S2
+            "ESP32-S3",   // ESP32-S3
+            "USB SERIAL", // Generic USB Serial (could be ESP32)
+            "USB\\VID_10C4&PID_EA60", // CP2102 VID/PID
+            "USB\\VID_1A86&PID_7523", // CH340 VID/PID
+            "USB\\VID_0403&PID_6001", // FT232 VID/PID
+        };
+
+        return esp32Indicators.Any(indicator => combined.Contains(indicator));
+    }
 
     /// <summary>
     /// Starts monitoring for USB device changes.
@@ -75,24 +105,38 @@ public class UsbDeviceWatcher : IDisposable
 
     private void OnDeviceInserted(object sender, EventArrivedEventArgs e)
     {
-        // Check if it's a COM port device
+        // Check if it's a COM port device, especially ESP32
         try
         {
             var instance = (ManagementBaseObject)e.NewEvent["TargetInstance"];
             var name = instance["Name"]?.ToString() ?? "";
             var caption = instance["Caption"]?.ToString() ?? "";
+            var pnpDeviceId = instance["PNPDeviceID"]?.ToString() ?? "";
             
-            // Only trigger for COM port devices (serial/USB-serial adapters)
-            if (name.Contains("COM") || caption.Contains("COM") || 
-                caption.Contains("Serial") || caption.Contains("USB Serial"))
+            // Check if it's a COM port device
+            var isComPort = name.Contains("COM") || caption.Contains("COM") || 
+                          caption.Contains("Serial") || caption.Contains("USB Serial");
+            
+            if (isComPort)
             {
-                DeviceConnected?.Invoke(this, EventArgs.Empty);
+                var isEsp32 = IsLikelyEsp32(name, caption, pnpDeviceId);
+                var deviceInfo = new DeviceInfoEventArgs
+                {
+                    DeviceName = name,
+                    DeviceCaption = caption,
+                    PnpDeviceId = pnpDeviceId,
+                    IsEsp32 = isEsp32,
+                    ComPort = ExtractComPort(name, caption)
+                };
+                
+                DeviceConnected?.Invoke(this, deviceInfo);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Still raise the event even if we can't check the device type
-            DeviceConnected?.Invoke(this, EventArgs.Empty);
+            System.Diagnostics.Debug.WriteLine($"Error in OnDeviceInserted: {ex.Message}");
+            // Still raise the event with minimal info
+            DeviceConnected?.Invoke(this, new DeviceInfoEventArgs { IsEsp32 = false });
         }
     }
 
@@ -103,17 +147,39 @@ public class UsbDeviceWatcher : IDisposable
             var instance = (ManagementBaseObject)e.NewEvent["TargetInstance"];
             var name = instance["Name"]?.ToString() ?? "";
             var caption = instance["Caption"]?.ToString() ?? "";
+            var pnpDeviceId = instance["PNPDeviceID"]?.ToString() ?? "";
             
-            if (name.Contains("COM") || caption.Contains("COM") || 
-                caption.Contains("Serial") || caption.Contains("USB Serial"))
+            var isComPort = name.Contains("COM") || caption.Contains("COM") || 
+                          caption.Contains("Serial") || caption.Contains("USB Serial");
+            
+            if (isComPort)
             {
-                DeviceDisconnected?.Invoke(this, EventArgs.Empty);
+                var isEsp32 = IsLikelyEsp32(name, caption, pnpDeviceId);
+                var deviceInfo = new DeviceInfoEventArgs
+                {
+                    DeviceName = name,
+                    DeviceCaption = caption,
+                    PnpDeviceId = pnpDeviceId,
+                    IsEsp32 = isEsp32,
+                    ComPort = ExtractComPort(name, caption)
+                };
+                
+                DeviceDisconnected?.Invoke(this, deviceInfo);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            DeviceDisconnected?.Invoke(this, EventArgs.Empty);
+            System.Diagnostics.Debug.WriteLine($"Error in OnDeviceRemoved: {ex.Message}");
+            DeviceDisconnected?.Invoke(this, new DeviceInfoEventArgs { IsEsp32 = false });
         }
+    }
+
+    private static string? ExtractComPort(string name, string caption)
+    {
+        // Try to extract COM port number from device name/caption
+        var text = $"{name} {caption}";
+        var match = System.Text.RegularExpressions.Regex.Match(text, @"COM(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return match.Success ? match.Value : null;
     }
 
     public void Dispose()
@@ -125,4 +191,21 @@ public class UsbDeviceWatcher : IDisposable
         Stop();
     }
 }
+
+/// <summary>
+/// Event arguments containing device information.
+/// </summary>
+public class DeviceInfoEventArgs : EventArgs
+{
+    public string? DeviceName { get; set; }
+    public string? DeviceCaption { get; set; }
+    public string? PnpDeviceId { get; set; }
+    public bool IsEsp32 { get; set; }
+    public string? ComPort { get; set; }
+}
+
+
+
+
+
 

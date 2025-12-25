@@ -75,6 +75,67 @@ public static class DatabaseHelper
         }
     }
 
+    public static bool UpdateUser(User user, out string? error)
+    {
+        error = null;
+        try
+        {
+            using var connection = new SqliteConnection(ConnectionString);
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText =
+                """
+                UPDATE users
+                SET name = $name, department = $department, status = $status
+                WHERE card_id = $cardId;
+                """;
+            cmd.Parameters.AddWithValue("$cardId", user.CardId);
+            cmd.Parameters.AddWithValue("$name", user.Name);
+            cmd.Parameters.AddWithValue("$department", user.Department);
+            cmd.Parameters.AddWithValue("$status", user.Status);
+            var affected = cmd.ExecuteNonQuery();
+            if (affected == 0)
+            {
+                error = "User not found.";
+                return false;
+            }
+            return true;
+        }
+        catch (SqliteException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool DeleteUser(string cardId, out string? error)
+    {
+        error = null;
+        try
+        {
+            using var connection = new SqliteConnection(ConnectionString);
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText =
+                """
+                DELETE FROM users WHERE card_id = $cardId;
+                """;
+            cmd.Parameters.AddWithValue("$cardId", cardId);
+            var affected = cmd.ExecuteNonQuery();
+            if (affected == 0)
+            {
+                error = "User not found.";
+                return false;
+            }
+            return true;
+        }
+        catch (SqliteException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
     public static User? GetUserByCard(string cardId)
     {
         using var connection = new SqliteConnection(ConnectionString);

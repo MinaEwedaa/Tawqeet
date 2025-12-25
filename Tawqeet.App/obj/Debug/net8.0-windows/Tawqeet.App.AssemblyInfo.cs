@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Tawqeet.App")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+4f53c0d1f8d14cb4d0fbb8df5930c8f7cd115c07")]
 [assembly: System.Reflection.AssemblyProductAttribute("Tawqeet.App")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Tawqeet.App")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

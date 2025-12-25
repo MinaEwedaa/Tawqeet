@@ -88,3 +88,8 @@ public class BoolToConnectTextConverter : IValueConverter
     }
 }
 
+
+
+
+
+

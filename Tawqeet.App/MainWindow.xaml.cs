@@ -36,9 +36,9 @@ public partial class MainWindow : Window
         _clockTimer.Tick += ClockTimer_Tick;
         _clockTimer.Start();
         
-        // Subscribe to USB device events
-        _usbWatcher.DeviceConnected += UsbWatcher_DeviceConnected;
-        _usbWatcher.DeviceDisconnected += UsbWatcher_DeviceDisconnected;
+        // Subscribe to USB device events (with device info)
+        _usbWatcher.DeviceConnected += (s, args) => UsbWatcher_DeviceConnected(s, args);
+        _usbWatcher.DeviceDisconnected += (s, args) => UsbWatcher_DeviceDisconnected(s, args);
         
         lstRecentScans.ItemsSource = _recentScans;
         dgLogs.ItemsSource = _attendanceLogs;
@@ -60,9 +60,39 @@ public partial class MainWindow : Window
         dpReportTo.SelectedDate = DateTime.Today;
         cmbDepartment.SelectedIndex = 0;
         
-        if (_settings.AutoConnectOnStartup && cmbComPort.Items.Count > 0)
+        // Try to auto-connect on startup
+        if (_settings.AutoConnectOnStartup)
         {
-            ConnectReader();
+            // First, try to find and connect to ESP32 if configured
+            if (_settings.IsEsp32Device)
+            {
+                var esp32Port = _rfidReader.FindEsp32Port();
+                if (esp32Port != null)
+                {
+                    cmbComPort.SelectedItem = esp32Port;
+                    ConnectReader();
+                }
+                else if (cmbComPort.Items.Count > 0)
+                {
+                    // Fallback to first available port
+                    cmbComPort.SelectedIndex = 0;
+                    ConnectReader();
+                }
+            }
+            else if (cmbComPort.Items.Count > 0)
+            {
+                // Try to restore last connected port
+                if (!string.IsNullOrEmpty(_settings.LastConnectedPort) && 
+                    _rfidReader.GetAvailablePorts().Contains(_settings.LastConnectedPort))
+                {
+                    cmbComPort.SelectedItem = _settings.LastConnectedPort;
+                }
+                else
+                {
+                    cmbComPort.SelectedIndex = 0;
+                }
+                ConnectReader();
+            }
         }
         
         // Start monitoring for USB device changes
@@ -110,12 +140,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private void UsbWatcher_DeviceConnected(object? sender, EventArgs e)
+    private void UsbWatcher_DeviceConnected(object? sender, DeviceInfoEventArgs e)
     {
         // Run on UI thread with a small delay to let the port initialize
         Dispatcher.BeginInvoke(async () =>
         {
-            await Task.Delay(500); // Wait for COM port to register
+            await Task.Delay(1000); // Wait for COM port to register (ESP32 may need more time)
             
             var currentPorts = _rfidReader.GetAvailablePorts();
             var newPorts = currentPorts.Except(_previousPorts).ToArray();
@@ -123,26 +153,56 @@ public partial class MainWindow : Window
             RefreshPorts();
             _previousPorts = currentPorts;
             
-            // If we found new ports and auto-connect is enabled
-            if (newPorts.Length > 0 && _settings.AutoConnectOnDevicePlug && !_rfidReader.IsConnected)
+            // Check if the new device is an ESP32
+            var portsWithInfo = _rfidReader.GetPortsWithInfo();
+            string? esp32Port = null;
+            string? newPort = null;
+            
+            foreach (var port in newPorts)
             {
-                // Select the new port
-                cmbComPort.SelectedItem = newPorts[0];
+                if (portsWithInfo.TryGetValue(port, out var portInfo) && portInfo.IsEsp32)
+                {
+                    esp32Port = port;
+                    break;
+                }
+                newPort ??= port; // First new port as fallback
+            }
+            
+            var targetPort = esp32Port ?? newPort;
+            
+            // If we found new ports and auto-connect is enabled
+            if (targetPort != null && _settings.AutoConnectOnDevicePlug && !_rfidReader.IsConnected)
+            {
+                // Select the new port (prefer ESP32)
+                cmbComPort.SelectedItem = targetPort;
+                
+                // Use ESP32 baud rate if it's an ESP32 device
+                if (esp32Port != null && _settings.IsEsp32Device)
+                {
+                    // Ensure baud rate is set for ESP32 (typically 115200)
+                    if (_settings.BaudRate != 115200)
+                    {
+                        _settings.BaudRate = 115200;
+                        SettingsService.Save(_settings);
+                    }
+                }
                 
                 // Auto-connect to the new reader
                 ConnectReader();
                 
                 // Show notification
-                ShowDeviceNotification($"Reader detected on {newPorts[0]} - Connected automatically");
+                var deviceType = esp32Port != null ? "ESP32" : "Reader";
+                ShowDeviceNotification($"{deviceType} detected on {targetPort} - Connected automatically");
             }
-            else if (newPorts.Length > 0)
+            else if (targetPort != null)
             {
-                ShowDeviceNotification($"New reader detected on {newPorts[0]}");
+                var deviceType = esp32Port != null ? "ESP32" : "Reader";
+                ShowDeviceNotification($"New {deviceType} detected on {targetPort}");
             }
         });
     }
 
-    private void UsbWatcher_DeviceDisconnected(object? sender, EventArgs e)
+    private void UsbWatcher_DeviceDisconnected(object? sender, DeviceInfoEventArgs e)
     {
         Dispatcher.BeginInvoke(async () =>
         {
@@ -160,7 +220,7 @@ public partial class MainWindow : Window
                     // The connected reader was unplugged
                     _rfidReader.Disconnect();
                     UpdateConnectionStatus(false);
-                    ShowDeviceNotification($"Reader on {connectedPort} disconnected");
+                    ShowDeviceNotification($"Device on {connectedPort} disconnected");
                 }
             }
             
@@ -206,12 +266,37 @@ public partial class MainWindow : Window
 
         try
         {
+            // Check if this is an ESP32 port and adjust baud rate if needed
+            var portsWithInfo = _rfidReader.GetPortsWithInfo();
+            if (portsWithInfo.TryGetValue(port, out var portInfo) && portInfo.IsEsp32)
+            {
+                // Ensure we're using ESP32-appropriate baud rate
+                if (_settings.BaudRate < 9600 || _settings.BaudRate > 921600)
+                {
+                    _settings.BaudRate = 115200; // Default ESP32 baud rate
+                    SettingsService.Save(_settings);
+                }
+            }
+
             _rfidReader.Connect(port, _settings.BaudRate);
             UpdateConnectionStatus(true, port);
+            
+            // Save the connected port for next time
+            _settings.LastConnectedPort = port;
+            SettingsService.Save(_settings);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Failed to connect: {ex.Message}", "RFID", MessageBoxButton.OK, MessageBoxImage.Error);
+            var deviceType = _settings.IsEsp32Device ? "ESP32" : "Reader";
+            MessageBox.Show($"Failed to connect to {deviceType}: {ex.Message}\n\n" +
+                          $"Port: {port}\n" +
+                          $"Baud Rate: {_settings.BaudRate}\n\n" +
+                          "Please check:\n" +
+                          "- Device is properly connected\n" +
+                          "- Correct COM port is selected\n" +
+                          "- No other application is using the port\n" +
+                          "- Device drivers are installed", 
+                          "Connection Error", MessageBoxButton.OK, MessageBoxImage.Error);
             UpdateConnectionStatus(false);
         }
     }
@@ -500,6 +585,16 @@ public partial class MainWindow : Window
     private void ViewFullLog_Click(object sender, MouseButtonEventArgs e)
     {
         tabMain.SelectedIndex = 0;
+    }
+
+    private void BtnManageUsers_Click(object sender, RoutedEventArgs e)
+    {
+        tabMain.SelectedIndex = 1; // Navigate to Employees tab
+    }
+
+    private void BtnSystemSettings_Click(object sender, RoutedEventArgs e)
+    {
+        tabMain.SelectedIndex = 3; // Navigate to Settings tab
     }
 
     private static void ExportToCsv(DataGrid grid)

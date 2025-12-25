@@ -1,4 +1,5 @@
 using System.IO.Ports;
+using System.Management;
 
 namespace Tawqeet.App;
 
@@ -13,6 +14,79 @@ public class RfidReader : IDisposable
     public bool IsConnected => _serialPort.IsOpen;
 
     public string[] GetAvailablePorts() => SerialPort.GetPortNames().OrderBy(p => p).ToArray();
+
+    /// <summary>
+    /// Gets available COM ports with their device information, specifically identifying ESP32 devices.
+    /// </summary>
+    public Dictionary<string, PortInfo> GetPortsWithInfo()
+    {
+        var ports = new Dictionary<string, PortInfo>();
+        var portNames = GetAvailablePorts();
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT Name, Caption, PNPDeviceID FROM Win32_PnPEntity WHERE Name LIKE '%COM%'");
+
+            foreach (ManagementObject device in searcher.Get())
+            {
+                var name = device["Name"]?.ToString() ?? "";
+                var caption = device["Caption"]?.ToString() ?? "";
+                var pnpDeviceId = device["PNPDeviceID"]?.ToString() ?? "";
+
+                // Extract COM port number
+                var comMatch = System.Text.RegularExpressions.Regex.Match(name, @"COM(\d+)", 
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                
+                if (comMatch.Success)
+                {
+                    var comPort = comMatch.Value;
+                    if (portNames.Contains(comPort))
+                    {
+                        var isEsp32 = UsbDeviceWatcher.IsLikelyEsp32(name, caption, pnpDeviceId);
+                        ports[comPort] = new PortInfo
+                        {
+                            PortName = comPort,
+                            DeviceName = name,
+                            DeviceCaption = caption,
+                            IsEsp32 = isEsp32
+                        };
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fallback: just return port names without device info
+            foreach (var port in portNames)
+            {
+                if (!ports.ContainsKey(port))
+                {
+                    ports[port] = new PortInfo { PortName = port, IsEsp32 = false };
+                }
+            }
+        }
+
+        // Add any ports that weren't found in WMI
+        foreach (var port in portNames)
+        {
+            if (!ports.ContainsKey(port))
+            {
+                ports[port] = new PortInfo { PortName = port, IsEsp32 = false };
+            }
+        }
+
+        return ports;
+    }
+
+    /// <summary>
+    /// Finds the first available ESP32 device port.
+    /// </summary>
+    public string? FindEsp32Port()
+    {
+        var ports = GetPortsWithInfo();
+        return ports.Values.FirstOrDefault(p => p.IsEsp32)?.PortName;
+    }
 
     public void Connect(string portName, int baudRate)
     {
@@ -107,5 +181,21 @@ public class RfidReader : IDisposable
         _serialPort.Dispose();
     }
 }
+
+/// <summary>
+/// Information about a serial port.
+/// </summary>
+public class PortInfo
+{
+    public string PortName { get; set; } = "";
+    public string? DeviceName { get; set; }
+    public string? DeviceCaption { get; set; }
+    public bool IsEsp32 { get; set; }
+}
+
+
+
+
+
 
 

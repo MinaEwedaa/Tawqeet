@@ -9,12 +9,13 @@ A modern WPF-based employee attendance tracking system that uses RFID card reade
 ## Features
 
 - **RFID Card Integration** - Supports serial port RFID readers with automatic USB device detection
+- **ESP32 Support** - Automatic detection and connection to ESP32-based RFID readers
 - **Real-time Attendance Tracking** - Instant clock-in/clock-out with visual feedback
 - **Employee Management** - Register, search, and manage employee records
 - **Modern Dashboard** - Live statistics showing present, absent, late arrivals, and attendance rates
 - **Reports & Analytics** - Filter attendance logs by date range, department, and status
 - **Export Functionality** - Export reports to CSV format
-- **Auto-Connect** - Automatically connects to RFID readers when plugged in
+- **Auto-Connect** - Automatically connects to RFID readers (including ESP32) when plugged in
 - **Keyboard Mode Support** - Works with RFID readers that emulate keyboard input
 
 ## Screenshots
@@ -33,7 +34,8 @@ The application features a clean, modern interface with:
 
 - Windows 10/11
 - .NET 8.0 Runtime
-- RFID card reader (serial/COM port based)
+- RFID card reader (serial/COM port based) or ESP32-based RFID reader
+- USB drivers for your device (CP210x, CH340, etc. - usually installed automatically by Windows)
 
 ## Installation
 
@@ -58,6 +60,18 @@ The application features a clean, modern interface with:
 
 ### Connecting a Reader
 
+#### ESP32 Devices (Recommended)
+1. Connect your ESP32 device via USB
+2. The application will automatically detect ESP32 devices (CP210x, CH340, etc.)
+3. If auto-connect is enabled, it will connect automatically
+4. Otherwise, select the COM port from the dropdown and click **Connect**
+
+**ESP32 Configuration:**
+- Default baud rate: **115200** (automatically configured)
+- Supported USB-to-Serial chips: CP210x, CH340, CH341, FT232
+- The app automatically identifies ESP32 devices and uses appropriate settings
+
+#### Other Serial Readers
 1. Plug in your RFID reader
 2. Select the COM port from the dropdown
 3. Click **Connect** (or enable auto-connect in settings)
@@ -121,4 +135,9 @@ MIT License - feel free to use and modify for your needs.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+
+
+
+
 
